@@ -475,327 +475,36 @@ of PCM frames that are processed per second.
 
 ...
 
-~~~~~~~~~~~~~~~~~~~~~~
-~~~~~~ I LEFT OFF HERE
-~~~~~~~~~~~~~~~~~~~~~~
-
-
-To read data from a data source:
-
-    ```c
-    ma_result result;
-    ma_uint64 framesRead;
-
-    result = ma_data_source_read_pcm_frames(pDataSource, pFramesOut, frameCount, &framesRead);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to read data from the data source.
-    }
-    ```
-
-If you don't need the number of frames that were successfully read you can pass in `NULL` to the
-`pFramesRead` parameter. If this returns a value less than the number of frames requested it means
-the end of the file has been reached. `MA_AT_END` will be returned only when the number of frames
-read is 0.
-
-When calling any data source function, with the exception of `ma_data_source_init()` and
-`ma_data_source_uninit()`, you can pass in any object that implements a data source. For example,
-you could plug in a decoder like so:
-
-    ```c
-    ma_result result;
-    ma_uint64 framesRead;
-    ma_decoder decoder;   // <-- This would be initialized with `ma_decoder_init_*()`.
-
-    result = ma_data_source_read_pcm_frames(&decoder, pFramesOut, frameCount, &framesRead);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to read data from the decoder.
-    }
-    ```
-
-If you want to seek forward you can pass in `NULL` to the `pFramesOut` parameter. Alternatively you
-can use `ma_data_source_seek_pcm_frames()`.
-
-To seek to a specific PCM frame:
-
-    ```c
-    result = ma_data_source_seek_to_pcm_frame(pDataSource, frameIndex);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to seek to PCM frame.
-    }
-    ```
-
-You can retrieve the total length of a data source in PCM frames, but note that some data sources
-may not have the notion of a length, such as noise and waveforms, and others may just not have a
-way of determining the length such as some decoders. To retrieve the length:
-
-    ```c
-    ma_uint64 length;
-
-    result = ma_data_source_get_length_in_pcm_frames(pDataSource, &length);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to retrieve the length.
-    }
-    ```
-
-Care should be taken when retrieving the length of a data source where the underlying decoder is
-pulling data from a data stream with an undefined length, such as internet radio or some kind of
-broadcast. If you do this, `ma_data_source_get_length_in_pcm_frames()` may never return.
-
-The current position of the cursor in PCM frames can also be retrieved:
-
-    ```c
-    ma_uint64 cursor;
-
-    result = ma_data_source_get_cursor_in_pcm_frames(pDataSource, &cursor);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to retrieve the cursor.
-    }
-    ```
-
-You will often need to know the data format that will be returned after reading. This can be
-retrieved like so:
-
-    ```c
-    ma_format format;
-    ma_uint32 channels;
-    ma_uint32 sampleRate;
-    ma_channel channelMap[MA_MAX_CHANNELS];
-
-    result = ma_data_source_get_data_format(pDataSource, &format, &channels, &sampleRate, channelMap, MA_MAX_CHANNELS);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to retrieve data format.
-    }
-    ```
-
-If you do not need a specific data format property, just pass in NULL to the respective parameter.
-
-There may be cases where you want to implement something like a sound bank where you only want to
-read data within a certain range of the underlying data. To do this you can use a range:
-
-    ```c
-    result = ma_data_source_set_range_in_pcm_frames(pDataSource, rangeBegInFrames, rangeEndInFrames);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to set the range.
-    }
-    ```
-
-This is useful if you have a sound bank where many sounds are stored in the same file and you want
-the data source to only play one of those sub-sounds. Note that once the range is set, everything
-that takes a position, such as cursors and loop points, should always be relatvie to the start of
-the range. When the range is set, any previously defined loop point will be reset.
-
-Custom loop points can also be used with data sources. By default, data sources will loop after
-they reach the end of the data source, but if you need to loop at a specific location, you can do
-the following:
-
-    ```c
-    result = ma_data_set_loop_point_in_pcm_frames(pDataSource, loopBegInFrames, loopEndInFrames);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to set the loop point.
-    }
-    ```
-
-The loop point is relative to the current range.
-
-It's sometimes useful to chain data sources together so that a seamless transition can be achieved.
-To do this, you can use chaining:
-
-    ```c
-    ma_decoder decoder1;
-    ma_decoder decoder2;
-
-    // ... initialize decoders with ma_decoder_init_*() ...
-
-    result = ma_data_source_set_next(&decoder1, &decoder2);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to set the next data source.
-    }
-
-    result = ma_data_source_read_pcm_frames(&decoder1, pFramesOut, frameCount, pFramesRead);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to read from the decoder.
-    }
-    ```
-
-In the example above we're using decoders. When reading from a chain, you always want to read from
-the top level data source in the chain. In the example above, `decoder1` is the top level data
-source in the chain. When `decoder1` reaches the end, `decoder2` will start seamlessly without any
-gaps.
-
-Note that when looping is enabled, only the current data source will be looped. You can loop the
-entire chain by linking in a loop like so:
-
-    ```c
-    ma_data_source_set_next(&decoder1, &decoder2);  // decoder1 -> decoder2
-    ma_data_source_set_next(&decoder2, &decoder1);  // decoder2 -> decoder1 (loop back to the start).
-    ```
-
-Note that setting up chaining is not thread safe, so care needs to be taken if you're dynamically
-changing links while the audio thread is in the middle of reading.
-
-Do not use `ma_decoder_seek_to_pcm_frame()` as a means to reuse a data source to play multiple
-instances of the same sound simultaneously. This can be extremely inefficient depending on the type
-of data source and can result in glitching due to subtle changes to the state of internal filters.
-Instead, initialize multiple data sources for each instance.
-
-
-4.1. Custom Data Sources
-------------------------
-You can implement a custom data source by implementing the functions in `ma_data_source_vtable`.
-Your custom object must have `ma_data_source_base` as it's first member:
-
-    ```c
-    struct my_data_source
-    {
-        ma_data_source_base base;
-        ...
-    };
-    ```
-
-In your initialization routine, you need to call `ma_data_source_init()` in order to set up the
-base object (`ma_data_source_base`):
-
-    ```c
-    static ma_result my_data_source_read(ma_data_source* pDataSource, void* pFramesOut, ma_uint64 frameCount, ma_uint64* pFramesRead)
-    {
-        // Read data here. Output in the same format returned by my_data_source_get_data_format().
-    }
-
-    static ma_result my_data_source_seek(ma_data_source* pDataSource, ma_uint64 frameIndex)
-    {
-        // Seek to a specific PCM frame here. Return MA_NOT_IMPLEMENTED if seeking is not supported.
-    }
-
-    static ma_result my_data_source_get_data_format(ma_data_source* pDataSource, ma_format* pFormat, ma_uint32* pChannels, ma_uint32* pSampleRate, ma_channel* pChannelMap, size_t channelMapCap)
-    {
-        // Return the format of the data here.
-    }
-
-    static ma_result my_data_source_get_cursor(ma_data_source* pDataSource, ma_uint64* pCursor)
-    {
-        // Retrieve the current position of the cursor here. Return MA_NOT_IMPLEMENTED and set *pCursor to 0 if there is no notion of a cursor.
-    }
-
-    static ma_result my_data_source_get_length(ma_data_source* pDataSource, ma_uint64* pLength)
-    {
-        // Retrieve the length in PCM frames here. Return MA_NOT_IMPLEMENTED and set *pLength to 0 if there is no notion of a length or if the length is unknown.
-    }
-
-    static ma_data_source_vtable g_my_data_source_vtable =
-    {
-        my_data_source_read,
-        my_data_source_seek,
-        my_data_source_get_data_format,
-        my_data_source_get_cursor,
-        my_data_source_get_length
-    };
-
-    ma_result my_data_source_init(my_data_source* pMyDataSource)
-    {
-        ma_result result;
-        ma_data_source_config baseConfig;
-
-        baseConfig = ma_data_source_config_init();
-        baseConfig.vtable = &g_my_data_source_vtable;
-
-        result = ma_data_source_init(&baseConfig, &pMyDataSource->base);
-        if (result != MA_SUCCESS) {
-            return result;
-        }
-
-        // ... do the initialization of your custom data source here ...
-
-        return MA_SUCCESS;
-    }
-
-    void my_data_source_uninit(my_data_source* pMyDataSource)
-    {
-        // ... do the uninitialization of your custom data source here ...
-
-        // You must uninitialize the base data source.
-        ma_data_source_uninit(&pMyDataSource->base);
-    }
-    ```
-
-Note that `ma_data_source_init()` and `ma_data_source_uninit()` are never called directly outside
-of the custom data source. It's up to the custom data source itself to call these within their own
-init/uninit functions.
-
-
-
-5. Engine
-=========
-The `ma_engine` API is a high level API for managing and mixing sounds and effect processing. The
-`ma_engine` object encapsulates a resource manager and a node graph, both of which will be
-explained in more detail later.
-
-Sounds are called `ma_sound` and are created from an engine. Sounds can be associated with a mixing
-group called `ma_sound_group` which are also created from the engine. Both `ma_sound` and
-`ma_sound_group` objects are nodes within the engine's node graph.
-
-When the engine is initialized, it will normally create a device internally. If you would rather
-manage the device yourself, you can do so and just pass a pointer to it via the engine config when
-you initialize the engine. You can also just use the engine without a device, which again can be
-configured via the engine config.
-
-The most basic way to initialize the engine is with a default config, like so:
-
-    ```c
-    ma_result result;
-    ma_engine engine;
-
-    result = ma_engine_init(NULL, &engine);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to initialize the engine.
-    }
-    ```
-
-This will result in the engine initializing a playback device using the operating system's default
-device. This will be sufficient for many use cases, but if you need more flexibility you'll want to
-configure the engine with an engine config:
-
-    ```c
-    ma_result result;
-    ma_engine engine;
-    ma_engine_config engineConfig;
-
-    engineConfig = ma_engine_config_init();
-    engineConfig.pDevice = &myDevice;
-
-    result = ma_engine_init(&engineConfig, &engine);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to initialize the engine.
-    }
-    ```
-
-In the example above we're passing in a pre-initialized device. Since the caller is the one in
-control of the device's data callback, it's their responsibility to manually call
-`ma_engine_read_pcm_frames()` from inside their data callback:
-
-    ```c
-    void playback_data_callback(ma_device* pDevice, void* pOutput, const void* pInput, ma_uint32 frameCount)
-    {
-        ma_engine_read_pcm_frames(&g_Engine, pOutput, frameCount, NULL);
-    }
-    ```
-
-You can also use the engine independent of a device entirely:
-
-    ```c
-    ma_result result;
-    ma_engine engine;
-    ma_engine_config engineConfig;
-
-    engineConfig = ma_engine_config_init();
-    engineConfig.noDevice   = MA_TRUE;
-    engineConfig.channels   = 2;        // Must be set when not using a device.
-    engineConfig.sampleRate = 48000;    // Must be set when not using a device.
-
-    result = ma_engine_init(&engineConfig, &engine);
-    if (result != MA_SUCCESS) {
-        return result;  // Failed to initialize the engine.
-    }
-    ```
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 Note that when you're not using a device, you must set the channel count and sample rate in the
 config or else miniaudio won't know what to use (miniaudio will use the device to determine this
